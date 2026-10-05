@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Only for the optional one-time Gemma download. Rooms, matching and chat never use the internet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:name=".SangamApp"
         android:allowBackup="false"

@@ -31,6 +31,7 @@ class Graph(val app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val store = LocalStore(app)
     val llm = LocalLlm(app)
+    val modelDownload = com.sangam.app.ai.ModelDownloader(app, scope) { llm.refresh() }
 
     @Volatile private var embedder: Embedder = HashingEmbedder()
     private val _semantic = MutableStateFlow(false)
