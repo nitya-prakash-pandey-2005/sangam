@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "sangam"
-include(":core")
+include(":core", ":app")
