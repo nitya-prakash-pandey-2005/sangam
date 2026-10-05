@@ -24,9 +24,11 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,7 +43,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.sangam.app.ai.AiStatus
+import com.sangam.app.ai.ModelDownloader
 import com.sangam.app.ai.Models
+import com.sangam.app.ai.gb
 import com.sangam.app.community.IntroStatus
 import com.sangam.core.matching.SearchMode
 import com.sangam.core.model.CapabilityCard
@@ -349,6 +353,8 @@ fun MeScreen(vm: SangamViewModel) {
     val ai by vm.ai.collectAsState()
     val semantic by vm.semantic.collectAsState()
     val extracting by vm.extracting.collectAsState()
+    val download by vm.modelDownload.collectAsState()
+    val extractStatus by vm.extractStatus.collectAsState()
     val ctx = LocalContext.current
 
     var offerings by remember(profile) { mutableStateOf(profile.offerings.joinToString(", ")) }
@@ -366,14 +372,32 @@ fun MeScreen(vm: SangamViewModel) {
         Panel {
             Text("Fill from your resume", style = MaterialTheme.typography.titleLarge)
             Hint("Paste a resume, GitHub README or a few lines about yourself. Gemma reads it on this phone; the text never leaves it.")
+            if (ai == AiStatus.None) ModelDownloadCard(download, vm.recommendedModel.size, vm::downloadModel, vm::cancelModelDownload)
+            (ai as? AiStatus.Failed)?.let { failed ->
+                if (failed.damagedFile) {
+                    Hint("The Gemma file on this phone is damaged.", River.marigold)
+                    Primary("Delete and download again", vm::redownloadModel, Modifier.padding(top = 8.dp))
+                } else if (failed.gpuOnlyFileFailed) {
+                    Hint("This phone's GPU couldn't run Gemma. The CPU version is slower but works on more phones.", River.marigold)
+                    Primary("Switch to the CPU version (${gb(ModelDownloader.Variant.CPU.size)})", vm::switchToCpuModel, Modifier.padding(top = 8.dp))
+                }
+            }
             OutlinedTextField(resume, { resume = it }, modifier = Modifier.fillMaxWidth().height(120.dp).padding(top = 8.dp))
+            // Start loading Gemma while the person is still typing, so "Fill my profile" answers sooner.
+            val typing = resume.isNotBlank()
+            LaunchedEffect(typing, ai) { if (typing && ai == AiStatus.Idle) vm.loadAi() }
             Spacer(Modifier.height(8.dp))
             Primary(if (extracting) "Reading on your phone…" else "Fill my profile", {
                 vm.extractProfile(resume) { p ->
                     offerings = p.offerings.joinToString(", "); needs = p.needs.joinToString(", "); interests = p.interests.joinToString(", ")
                     experience = p.experience.joinToString(", "); intent = p.intent.joinToString(", ")
                 }
-            }, enabled = resume.isNotBlank() && !extracting)
+            }, enabled = resume.isNotBlank() && !extracting && ai != AiStatus.None)
+            if (extracting) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 10.dp))
+                Hint(extractStatus ?: "Starting Gemma")
+                TextButton(onClick = vm::cancelExtraction) { Text("Stop") }
+            }
         }
         Spacer(Modifier.height(12.dp))
         Panel {
@@ -415,13 +439,64 @@ fun MeScreen(vm: SangamViewModel) {
                     AiStatus.None -> "No Gemma model installed. Profiles still work by typing."
                     AiStatus.Idle -> "Gemma is installed; it loads the first time you use it."
                     AiStatus.Loading -> "Loading Gemma…"
-                    is AiStatus.Ready -> "${s.name} is ready on the GPU."
+                    is AiStatus.Ready -> "${s.name} is ready on the ${s.backend}."
                     is AiStatus.Failed -> "Gemma failed to load: ${s.message}"
                 },
             )
             Hint(if (semantic) "Matching uses EmbeddingGemma on this phone." else "Matching uses the built-in offline matcher. Add an EmbeddingGemma model for semantic matching.")
             Hint("Models folder: ${Models.dir(ctx).absolutePath}")
             if (ai == AiStatus.Idle) TextButton(onClick = { vm.loadAi() }) { Text("Load Gemma now") }
+        }
+    }
+}
+
+/** Shown only when no model is on the phone: one-time download with live progress. */
+@Composable
+private fun ModelDownloadCard(state: ModelDownloader.State, size: Long, onStart: () -> Unit, onCancel: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = 10.dp)
+            .background(River.marigold.copy(alpha = 0.10f), RoundedCornerShape(14.dp))
+            .padding(14.dp),
+    ) {
+        when (state) {
+            is ModelDownloader.State.Running -> {
+                val fraction = if (state.total > 0) (state.done.toFloat() / state.total).coerceIn(0f, 1f) else 0f
+                Text("Downloading Gemma… ${(fraction * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                val left = if (state.bytesPerSec > 0) (state.total - state.done) / state.bytesPerSec else -1
+                Hint(
+                    listOfNotNull(
+                        "${gb(state.done)} of ${gb(state.total)}",
+                        if (state.bytesPerSec > 0) "${gb(state.bytesPerSec)}/s" else null,
+                        when {
+                            left < 0 -> null
+                            left < 60 -> "less than a minute left"
+                            else -> "about ${(left + 59) / 60} min left"
+                        },
+                    ).joinToString(" · "),
+                )
+                state.note?.let { Hint(it, River.marigold) }
+                Hint("You can leave the app; the download continues and shows in your notifications.")
+                TextButton(onClick = onCancel) { Text("Cancel download") }
+            }
+            is ModelDownloader.State.Verifying -> {
+                Text("Checking the download… ${(state.fraction * 100).toInt()}%", style = MaterialTheme.typography.titleMedium)
+                LinearProgressIndicator(progress = { state.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                Hint("Making sure the file arrived intact before Gemma uses it.")
+            }
+            is ModelDownloader.State.Failed -> {
+                Text("Download didn't finish", style = MaterialTheme.typography.titleMedium)
+                Hint(state.message, River.marigold)
+                Spacer(Modifier.height(8.dp))
+                Primary("Try again", onStart)
+            }
+            ModelDownloader.State.Done -> Hint("Gemma is downloaded and ready to use.")
+            ModelDownloader.State.Idle -> {
+                Text("Gemma isn't on this phone yet", style = MaterialTheme.typography.titleMedium)
+                Hint("Download it once (${gb(size)}, Wi-Fi recommended). After that it runs completely offline, and your text never leaves the phone.")
+                Spacer(Modifier.height(8.dp))
+                Primary("Download Gemma (${gb(size)})", onStart)
+            }
         }
     }
 }
