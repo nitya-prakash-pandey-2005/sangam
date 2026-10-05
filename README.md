@@ -4,7 +4,7 @@
 
 *Sangam* (संगम) is Sanskrit for *confluence*, the place where rivers meet. The app turns the phones in a room into a private, serverless community. That room can be a meetup, a conference, a campus fair, a coworking space or a workshop.
 
-- **No internet, no server, no sign-up.** Phones talk directly over Bluetooth and Wi-Fi.
+- **No internet, no server, no sign-up.** Phones talk directly over Bluetooth and Wi-Fi. The only thing Sangam ever downloads is the optional AI model, once.
 - **Matching runs on your phone.** Each phone ranks the people nearby by *mutual* fit: they can help you **and** you can help them.
 - **Anonymous by default.** People see what you can offer and what you need, never your name, until you both accept an introduction.
 - **Provable privacy.** A built-in ledger shows every message your phone sent, to whom, and which fields it contained.
@@ -204,7 +204,7 @@ Unit tests cover:
 |---|---|
 | `mesh` | `NearbyMesh`: Nearby Connections cluster with discovery, connection retries, back-off and reconnects |
 | `community` | The community engine: handshake, sync, room encryption, end-to-end sealing, sender checks, introductions, chat, projects, ledger, demo people |
-| `ai` | LiteRT-LM Gemma for profile extraction and EmbeddingGemma for semantic matching |
+| `ai` | LiteRT-LM Gemma for profile extraction (GPU or CPU build), EmbeddingGemma for semantic matching, and the verified one-time model downloader |
 | `data` | `LocalStore`: guest id, key pair, profile, identity, room, your projects |
 | `ui` | Compose screens: Room, Discover, Projects, Inbox, Chat, Me, Event Wall, Privacy ledger |
 
@@ -215,13 +215,13 @@ Unit tests cover:
 - **QR:** Google code scanner (camera), ZXing (QR generation).
 - **On-device AI:** [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) running Gemma and EmbeddingGemma.
 - **Crypto:** JCA: AES-GCM, HMAC-SHA256, ECDH P-256, HKDF.
-- **Build:** Android Gradle Plugin 9, compileSdk 37, minSdk 30 (Android 11+), targetSdk 36.
+- **Build:** Android Gradle Plugin 9, compileSdk 37, minSdk 29 (Android 10+), targetSdk 36.
 
 ## Getting started
 
 ### Requirements
 
-- Android phones running **Android 11 or newer** with Google Play services. For the full experience, use two or more.
+- Android phones running **Android 10 or newer** with Google Play services. For the full experience, use two or more.
 - To build from source: **JDK 17** and the **Android SDK** (platform 37, build-tools 36 or newer).
 
 ### Build and install
@@ -268,14 +268,29 @@ Sangam works fully without any model, using the built-in offline embedder. Optio
 - **Profile extraction:** Gemma reads a pasted resume, README or bio and fills the six profile fields, using constrained JSON output. The text never leaves the phone.
 - **Semantic matching:** EmbeddingGemma vectors replace the hashing embedder for better matching of paraphrases.
 
-Copy models into the app's folder (shown at the bottom of the **Me** tab):
+### Getting Gemma onto the phone
 
-```bash
-adb push gemma-4-E2B-it.litertlm /sdcard/Android/data/com.sangam.app/files/models/
-adb push embeddinggemma.litertlm /sdcard/Android/data/com.sangam.app/files/models/   # file name must contain "embed"
-```
+- **In the app (easiest):**
+  - If no model is on the phone, the **Me** tab shows **Download Gemma**, with a progress bar showing size, speed and time left.
+  - Sangam picks the right build of [Gemma 4 E2B](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm) for the phone:
+    - **GPU build** (`gemma-4-E2B-it-gpu.litertlm`, 2.0 GB) on phones with a GPU driver (OpenCL). Faster.
+    - **CPU build** (`gemma-4-E2B-it.litertlm`, 2.6 GB) on phones without one.
+  - Each download is pinned to one published revision and **checked against its SHA-256** before use. A damaged download is deleted, and you're asked to try again.
+  - It uses Android's download service, so it keeps going if you leave the app, resumes after network drops, and shows in your notifications.
+  - Wi-Fi is recommended. This is the only time Sangam uses the internet.
+- **If a model is already on the phone**, Sangam uses it directly and no download is offered.
+  - If its GPU can't run the GPU build, Sangam offers to **switch to the CPU build**.
+  - If the file is damaged, it offers to **download it again**.
+- **From a laptop**, copy a model into the app's folder (shown at the bottom of the **Me** tab):
 
-Models aren't bundled; they're covered by the Gemma Terms of Use.
+  ```bash
+  adb push gemma-4-E2B-it-gpu.litertlm /sdcard/Android/data/com.sangam.app/files/models/
+  adb push embeddinggemma.litertlm /sdcard/Android/data/com.sangam.app/files/models/   # optional; file name must contain "embed"
+  ```
+
+Gemma needs a phone with plenty of free memory (6 GB of RAM or more recommended).
+
+Models aren't bundled with the app. Gemma 4 is released under the Apache 2.0 licence; EmbeddingGemma is covered by the Gemma Terms of Use.
 
 ## Limitations
 
@@ -299,4 +314,4 @@ Models aren't bundled; they're covered by the Gemma Terms of Use.
 - **Bricolage Grotesque font:** SIL Open Font License 1.1.
 - **ZXing** and **LiteRT-LM:** Apache License 2.0.
 - **Google Play services** (Nearby Connections, code scanner): Google APIs Terms of Service.
-- **Gemma models:** Gemma Terms of Use (not bundled).
+- **Gemma 4:** Apache License 2.0; **EmbeddingGemma:** Gemma Terms of Use. Neither is bundled; Gemma 4 can be downloaded in the app.
