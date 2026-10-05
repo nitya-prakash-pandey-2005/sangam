@@ -1,9 +1,12 @@
 package com.sangam.core.text
 
 import com.sangam.core.model.CapabilityProfile
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlin.math.sqrt
 
 /** Anything that turns text into a vector: the hashing fallback here, EmbeddingGemma on the phone. */
@@ -99,31 +102,60 @@ class HashingEmbedder(override val dim: Int = 256) : Embedder {
 
 /** Reads the profile JSON written by the on-device model from a pasted resume / README. */
 object ProfileParser {
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val json = Json { isLenient = true }
 
-    @Serializable
-    private data class Dto(
-        val offerings: List<String> = emptyList(),
-        val needs: List<String> = emptyList(),
-        val interests: List<String> = emptyList(),
-        val experience: List<String> = emptyList(),
-        val intent: List<String> = emptyList(),
-        @SerialName("collaboration_preferences") val collab: List<String> = emptyList(),
-    )
-
+    /**
+     * Small on-device models don't always follow the schema exactly, so this accepts what they
+     * actually produce: code fences, nulls, a string where a list was asked for, other key names,
+     * and replies cut off before the closing brackets.
+     */
     fun parse(reply: String): CapabilityProfile? {
-        val start = reply.indexOf('{')
-        val end = reply.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        val dto = runCatching { json.decodeFromString<Dto>(reply.substring(start, end + 1)) }.getOrNull() ?: return null
-        fun clean(l: List<String>) = l.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(8)
-        val p = CapabilityProfile(clean(dto.offerings), clean(dto.needs), clean(dto.interests), clean(dto.experience), clean(dto.intent), clean(dto.collab))
+        val obj = jsonObject(reply) ?: return null
+        fun list(vararg keys: String): List<String> {
+            val values = when (val v = keys.firstNotNullOfOrNull { obj[it] }) {
+                is JsonArray -> v.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                is JsonPrimitive -> v.contentOrNull?.split(',', ';').orEmpty()
+                null, JsonNull, is JsonObject -> emptyList()
+            }
+            return values.map { it.trim() }.filter { it.isNotEmpty() && !it.equals("none", true) && !it.equals("n/a", true) }
+                .distinct().take(8)
+        }
+        val p = CapabilityProfile(
+            offerings = list("offerings", "skills", "offers"),
+            needs = list("needs", "looking_for", "seeking"),
+            interests = list("interests", "topics"),
+            experience = list("experience"),
+            intent = list("intent", "goals"),
+            collab = list("collaboration_preferences", "collaboration", "collab"),
+        )
         return p.takeUnless { it.isBlank }
+    }
+
+    private fun jsonObject(reply: String): JsonObject? {
+        val start = reply.indexOf('{')
+        if (start < 0) return null
+        val body = reply.substring(start)
+        val end = body.lastIndexOf('}')
+        val candidates = buildList {
+            if (end > 0) add(body.substring(0, end + 1))
+            // Cut off mid-reply (token limit): close the open string, list and object.
+            val open = body.trimEnd().trimEnd(',')
+            add("$open]}"); add("$open\"]}"); add("$open}")
+            // Cut inside a key or value: drop back to the last complete field and close the object.
+            var cut = open.lastIndexOf(',')
+            while (cut > 0) {
+                val head = open.substring(0, cut)
+                add("$head}"); add("$head]}")
+                cut = open.lastIndexOf(',', cut - 1)
+            }
+        }
+        return candidates.firstNotNullOfOrNull { c -> runCatching { json.parseToJsonElement(c) as? JsonObject }.getOrNull() }
     }
 
     val SYSTEM = """
         You turn a person's resume, README or self-description into a capability profile for a professional meetup app.
         Use short phrases (2-4 words). Do not include names, emails, phone numbers or company secrets.
+        Only use what the text actually says. If something isn't mentioned, use an empty list []. Never invent skills.
         Reply with ONE JSON object only:
         {"offerings":[skills they can contribute],"needs":[skills or help they are looking for],"interests":[topics],
          "experience":[short evidence, e.g. "3 years Android"],"intent":[what they want now, e.g. "project team"],

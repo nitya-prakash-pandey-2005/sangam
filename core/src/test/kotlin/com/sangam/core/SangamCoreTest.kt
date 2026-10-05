@@ -168,4 +168,27 @@ class SangamCoreTest {
         assertEquals(listOf("remote ok"), p.collab)
         assertNull(ProfileParser.parse("no json here"))
     }
+
+    @Test
+    fun `profile parser accepts what small models really produce`() {
+        // null and a plain string instead of a list
+        val a = ProfileParser.parse("""{"offerings":"Full stack development, React","needs":null,"interests":["computational neurology"]}""")!!
+        assertEquals(listOf("Full stack development", "React"), a.offerings)
+        assertEquals(emptyList<String>(), a.needs)
+        assertEquals(listOf("computational neurology"), a.interests)
+        // reply cut off before the closing brackets
+        val b = ProfileParser.parse("""{"offerings":["Full stack development"],"interests":["computational neuro""")!!
+        assertEquals(listOf("Full stack development"), b.offerings)
+        // code fence and different key names
+        val c = ProfileParser.parse("```json\n{\"skills\":[\"Kotlin\"],\"looking_for\":[\"designer\"]}\n```")!!
+        assertEquals(listOf("Kotlin"), c.offerings)
+        assertEquals(listOf("designer"), c.needs)
+        // reply cut off inside a key: everything complete before the cut is kept
+        val d = ProfileParser.parse("""{"offerings":["Computer vision","PyTorch"],"needs":["Android developer"],"interests":["Edge AI"],"collaboration_preferences""")!!
+        assertEquals(listOf("Computer vision", "PyTorch"), d.offerings)
+        assertEquals(listOf("Android developer"), d.needs)
+        assertEquals(listOf("Edge AI"), d.interests)
+        // "none" placeholders are dropped; an all-empty profile is not a profile
+        assertNull(ProfileParser.parse("""{"offerings":["none"],"needs":[]}"""))
+    }
 }
